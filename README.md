@@ -85,13 +85,15 @@ State is stored in `~/Library/Application Support/awake/` as `awake.pid`, `awake
 ## Development
 
 ```sh
+make build        # builds ./awake with version info baked in
+make test         # go test ./...
+make vet          # go vet ./...
 gofmt -w .
-go test ./...
-go vet ./...
-go build ./...
 ./awake doctor
 ./awake status --json
 ./awake start
 ./awake run
 ./awake stop
 ```
+
+Releases are built with [goreleaser](https://goreleaser.com) (`.goreleaser.yml`): `make release` builds darwin amd64/arm64 binaries, attaches them to the GitHub release for the current tag, and writes a `checksums.txt`. Requires a `GITHUB_TOKEN` and a `vX.Y.Z` tag.

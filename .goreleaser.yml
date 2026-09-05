@@ -1,0 +1,29 @@
+version: 2
+
+project_name: awake
+
+builds:
+  - id: awake
+    main: ./cmd/awake
+    binary: awake
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - >-
+        -s -w
+        -X main.version={{ .Version }}
+        -X main.commit={{ .Commit }}
+        -X main.buildTime={{ .Date }}
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: teasec4
+    name: awake
