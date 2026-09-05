@@ -74,6 +74,54 @@ func TestLoadMissingPID(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+func TestSupervisorStateRoundTrip(t *testing.T) {
+	s := testStore(t)
+	if pid, err := s.LoadSupervisor(); err != nil || pid != 0 {
+		t.Fatalf("missing supervisor: %d %v", pid, err)
+	}
+	if err := s.SaveSupervisor(42); err != nil {
+		t.Fatal(err)
+	}
+	if pid, err := s.LoadSupervisor(); err != nil || pid != 42 {
+		t.Fatalf("got %d %v", pid, err)
+	}
+	if err := s.ClearSupervisor(); err != nil {
+		t.Fatal(err)
+	}
+	if pid, err := s.LoadSupervisor(); err != nil || pid != 0 {
+		t.Fatalf("after clear: %d %v", pid, err)
+	}
+}
+func TestRunningProbe(t *testing.T) {
+	s := testStore(t)
+	ok, err := s.Running()
+	if err != nil || ok {
+		t.Fatalf("fresh store reports running: %v %v", ok, err)
+	}
+	release, err := s.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err = s.Running()
+	if err != nil || !ok {
+		t.Fatalf("held lock not detected: %v %v", ok, err)
+	}
+	release()
+	ok, err = s.Running()
+	if err != nil || ok {
+		t.Fatalf("released lock still running: %v %v", ok, err)
+	}
+	if err := s.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.LockPath(), []byte("999999\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ok, err = s.Running()
+	if err != nil || ok {
+		t.Fatalf("stale lock reports running: %v %v", ok, err)
+	}
+}
 func TestHasAssertionForPID(t *testing.T) {
 	text := `pid 123(caffeinate): [0x000001] 00:02:00 PreventUserIdleSystemSleep named: "caffeinate"`
 	if !HasAssertionForPID(text, 123) {

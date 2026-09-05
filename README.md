@@ -7,10 +7,18 @@ It never calls `sudo`, changes `pmset` settings, opens remote connections, sends
 ## Install
 
 ```sh
+go install github.com/teasec4/awake/cmd/awake@latest
+```
+
+Or from a checkout:
+
+```sh
 go install ./cmd/awake
 # or build a local binary
 go build -o awake ./cmd/awake
 ```
+
+`go install` places the binary at `$(go env GOPATH)/bin/awake`. Make sure that directory is on your `PATH`.
 
 `caffeinate` and `pmset` are supplied by macOS. Check the machine first:
 
@@ -21,27 +29,26 @@ awake doctor
 ## Use
 
 ```sh
-awake run
+awake start              # run in the background, returns immediately
+awake run                # foreground alternative with a live TUI
 awake status
 awake status --json
 awake stats --watch --interval 2s
 awake stop
 ```
 
-`awake run` remains in the foreground and owns only the `caffeinate -is` process it starts. It has a compact live TUI; `q`, Escape, or Ctrl+C stop it cleanly. `awake run --no-tui` is intended for launchd and reports concise output. `awake status --json` is suitable for health checks and agents.
+`awake start` (alias `awake --start`) launches awake in the background as a detached supervisor and returns immediately; the session stays awake until `awake stop`. Its output is written to `~/Library/Application Support/awake/logs/awake.start.{out,err}.log`. `awake run` is the foreground alternative: it owns only the `caffeinate -is` process it starts, has a compact live TUI, and `q`, Escape, or Ctrl+C stop it cleanly. `awake run --no-tui` is intended for launchd and reports concise output. `awake status --json` is suitable for health checks and agents.
 
-`awake` considers its own state active only when the saved PID is still `caffeinate` and `pmset -g assertions` identifies an assertion for that exact PID. A manually started `caffeinate` is reported as external and is never stopped by `awake stop`.
+`awake stop` stops the background supervisor and the `caffeinate` it owns; with no supervisor it stops only the awake-owned `caffeinate`. `awake` considers its own state active only when the saved PID is still `caffeinate` and `pmset -g assertions` identifies an assertion for that exact PID. A manually started `caffeinate` is reported as external and is never stopped by `awake stop`.
 
 ## Herdr, Tailscale, and SSH
 
-Run `awake run` in its own Herdr pane, then detach:
+Run `awake start` in its own Herdr pane, then detach (or use `awake install` for always-on supervision):
 
 ```text
 Mac is on and connected to power
         |
-awake install
-        |
-awake run in a Herdr pane
+awake start
         |
 Herdr detach
         |
@@ -84,5 +91,7 @@ go vet ./...
 go build ./...
 ./awake doctor
 ./awake status --json
+./awake start
 ./awake run
+./awake stop
 ```

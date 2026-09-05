@@ -1,4 +1,4 @@
-module awake
+module github.com/teasec4/awake
 
 go 1.26.1
 

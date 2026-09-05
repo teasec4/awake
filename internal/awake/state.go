@@ -85,6 +85,42 @@ func (s *StateStore) LoadProcess() (ProcessInfo, error) {
 	err = json.Unmarshal(b, &p)
 	return p, err
 }
+
+// Running reports whether a live awake supervisor holds the lock.
+func (s *StateStore) Running() (bool, error) {
+	if _, err := os.Stat(s.LockPath()); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	stale, err := s.lockIsStale()
+	if err != nil {
+		return false, err
+	}
+	return !stale, nil
+}
+
+func (s *StateStore) SupervisorPath() string { return filepath.Join(s.Dir, "awake.supervisor.pid") }
+func (s *StateStore) SaveSupervisor(pid int) error {
+	if err := s.Ensure(); err != nil {
+		return err
+	}
+	return os.WriteFile(s.SupervisorPath(), []byte(strconv.Itoa(pid)+"\n"), 0600)
+}
+func (s *StateStore) LoadSupervisor() (int, error) {
+	b, err := os.ReadFile(s.SupervisorPath())
+	if err != nil {
+		return 0, nil
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		return 0, nil
+	}
+	return pid, nil
+}
+func (s *StateStore) ClearSupervisor() error { return os.Remove(s.SupervisorPath()) }
+
 func (s *StateStore) SaveSnapshot(v Snapshot) error {
 	if err := s.Ensure(); err != nil {
 		return err

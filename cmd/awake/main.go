@@ -6,14 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
-	"awake/internal/awake"
+	"github.com/teasec4/awake/internal/awake"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
@@ -55,13 +57,67 @@ func rootCmd(a *app) *cobra.Command {
 	root.PersistentFlags().BoolVar(&a.verbose, "verbose", false, "show diagnostic details")
 	root.PersistentFlags().DurationVar(&a.interval, "interval", time.Second, "refresh interval")
 	root.PersistentFlags().BoolVar(&a.noColor, "no-color", false, "disable colour output")
+	var startFlag bool
+	root.Flags().BoolVar(&startFlag, "start", false, "start awake in the background (same as 'awake start')")
 	root.PersistentPreRun = func(*cobra.Command, []string) {
 		if a.noColor {
 			lipgloss.SetColorProfile(termenv.Ascii)
 		}
 	}
-	root.AddCommand(runCmd(a), statusCmd(a), statsCmd(a), stopCmd(a), installCmd(a), uninstallCmd(a), doctorCmd(a), versionCmd())
+	root.RunE = func(cmd *cobra.Command, args []string) error {
+		if startFlag {
+			return a.start(cmd.Context())
+		}
+		return cmd.Help()
+	}
+	root.AddCommand(startCmd(a), runCmd(a), statusCmd(a), statsCmd(a), stopCmd(a), installCmd(a), uninstallCmd(a), doctorCmd(a), versionCmd())
 	return root
+}
+func startCmd(a *app) *cobra.Command {
+	return &cobra.Command{Use: "start", Short: "Start awake in the background", RunE: func(cmd *cobra.Command, args []string) error { return a.start(cmd.Context()) }}
+}
+func (a *app) start(ctx context.Context) error {
+	running, err := a.store.Running()
+	if err != nil {
+		return err
+	}
+	if running {
+		return errors.New("awake is already running")
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if err := a.store.Ensure(); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(filepath.Join(a.store.LogsDir(), "awake.start.out.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	errLog, err := os.OpenFile(filepath.Join(a.store.LogsDir(), "awake.start.err.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		_ = out.Close()
+		return err
+	}
+	cmd := exec.Command(exe, "run", "--no-tui")
+	cmd.Stdout = out
+	cmd.Stderr = errLog
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err = cmd.Start(); err != nil {
+		_ = out.Close()
+		_ = errLog.Close()
+		return fmt.Errorf("start background supervisor: %w", err)
+	}
+	_ = out.Close()
+	_ = errLog.Close()
+	if err = a.store.SaveSupervisor(cmd.Process.Pid); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return err
+	}
+	fmt.Printf("awake: started (supervisor PID %d)\nlogs: %s\n", cmd.Process.Pid, a.store.LogsDir())
+	return nil
 }
 func runCmd(a *app) *cobra.Command {
 	var noTUI bool
@@ -145,13 +201,68 @@ func statsCmd(a *app) *cobra.Command {
 	return c
 }
 func stopCmd(a *app) *cobra.Command {
-	return &cobra.Command{Use: "stop", Short: "Stop only awake-owned caffeinate", RunE: func(c *cobra.Command, args []string) error {
+	return &cobra.Command{Use: "stop", Short: "Stop awake's background supervisor and caffeinate", RunE: func(c *cobra.Command, args []string) error {
+		if _, err := a.stopSupervisor(c.Context()); err != nil {
+			return err
+		}
 		if err := a.power.Stop(c.Context()); err != nil {
 			return err
 		}
 		fmt.Println("awake: stopped")
 		return nil
 	}}
+}
+func (a *app) stopSupervisor(ctx context.Context) (bool, error) {
+	pid, err := a.store.LoadSupervisor()
+	if err != nil {
+		return false, err
+	}
+	if pid <= 0 || !alive(pid) {
+		_ = a.store.ClearSupervisor()
+		return false, nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return false, err
+	}
+	b, err := a.runner.Output(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "comm=")
+	if err != nil {
+		return false, fmt.Errorf("verify supervisor PID %d: %w", pid, err)
+	}
+	if filepath.Base(strings.TrimSpace(string(b))) != filepath.Base(exe) {
+		return false, fmt.Errorf("refusing to stop PID %d: it is not the awake supervisor", pid)
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false, err
+	}
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		return false, fmt.Errorf("stop supervisor PID %d: %w", pid, err)
+	}
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if !alive(pid) {
+			_ = a.store.ClearSupervisor()
+			return true, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-deadline.C:
+			return false, fmt.Errorf("supervisor PID %d did not exit within 5s", pid)
+		case <-tick.C:
+		}
+	}
+}
+func alive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	p, err := os.FindProcess(pid)
+	return err == nil && p.Signal(syscall.Signal(0)) == nil
 }
 func installCmd(a *app) *cobra.Command {
 	var dry bool
