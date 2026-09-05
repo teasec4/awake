@@ -10,16 +10,17 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/teasec4/awake/internal/awake"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
+	"github.com/teasec4/awake/internal/awake"
 )
 
 var version = "dev"
@@ -329,7 +330,15 @@ func doctorCmd(a *app) *cobra.Command {
 }
 func versionCmd() *cobra.Command {
 	return &cobra.Command{Use: "version", Short: "Show build version", Run: func(*cobra.Command, []string) {
-		fmt.Printf("awake %s (commit %s, built %s)\n", version, commit, buildTime)
+		v := version
+		if v == "dev" {
+			// `go install module@version` doesn't inject ldflags; read the
+			// version from build info instead.
+			if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+				v = info.Main.Version
+			}
+		}
+		fmt.Printf("awake %s (commit %s, built %s)\n", v, commit, buildTime)
 	}}
 }
 func statusText(s awake.Snapshot) string {
